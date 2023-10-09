@@ -15,6 +15,7 @@ library(fido)
 library(mvtnorm)
 library(LaplacesDemon)
 library(tidyverse)
+library(DESeq2)
 ```
 
 
@@ -70,22 +71,6 @@ duplicated_sequences = unique(obs_sequences$sequence[duplicated(obs_sequences$se
 obs_sequences = obs_sequences[!(obs_sequences$sequence %in% duplicated_sequences), ] 
 ```
 
-```{r}
-duplicated_sequences <- cbind(data.frame(ERCC_exp@elementMetadata$Template), data.frame(ERCC_exp@elementMetadata$miRNA), data.frame(ERCC_exp@assays@data$total_counts))
-```
-
-
-```{r}
-colnames(duplicated_sequences)[c(1,2)] = c('sequence', 'mirna')
-
-```
-
-```{r}
-duplicated_sequences <- duplicated_sequences[duplicated(duplicated_sequences$sequence),]
-#duplicated_sequences = duplicated_sequences %>% group_by(sequence)
-```
-
-
 
 ```{r}
 n_samples = dim(ERCC_exp@assays@data$total_counts)[2]
@@ -115,11 +100,6 @@ X0 = rep(1, ncol(ERCC_exp))
 X <- rbind(X0, X1)
 ERCC_mirnaseq_counts = ERCC_exp@assays@data$total_counts 
 unique_mirnas = unique(ERCC_exp@elementMetadata$miRNA)
-ERCC_mirna_counts = matrix(0, nrow = ncol(ERCC_exp), ncol = length(unique_mirnas))
-for(i in 1:length(unique_mirnas)){
-  ERCC_mirna_counts[,i] =colSums(sequence_level_counts[ERCC_exp@elementMetadata$miRNA == unique_mirnas[i],])
-}
-Y <- t(ERCC_mirna_counts[,-1])
 
 ```
 
@@ -144,10 +124,10 @@ mirna_level_counts <- t(mirna_level_counts)
 #clr transform the raw count data 
 #Y doesn't have any filtering for sequences that align to more than one mirna or mirnas whose canonical sequences exceed a certain length 
 #mirna_level_counts is filtered data 
-Y_clr = matrix(0, nrow = N, ncol = D)
+#Y_clr = matrix(0, nrow = N, ncol = D)
 mirna_counts_clr = matrix(0, nrow = nrow(mirna_level_counts), ncol = ncol(mirna_level_counts))
-for(j in 1:N){
-  Y_clr[j,] = compositions::clr(Y[j,])
+for(j in 1:nrow(mirna_level_counts)){
+  #Y_clr[j,] = compositions::clr(Y[j,])
   mirna_counts_clr[j,] = compositions::clr(mirna_level_counts[j,])
 }
 
@@ -157,9 +137,9 @@ for(j in 1:N){
 #calculate hat matrix as formula is given in Aitchison compositional data analysis book
 #Y_clr is raw data that has been CLR transformed 
 #mirna_counts_clr is filtered data 
-theta_hat = solve(t(X) %*% X) %*% t(X) %*% Y_clr
+#theta_hat = solve(t(X) %*% X) %*% t(X) %*% Y_clr
 theta_hat_cleandata = solve(t(X) %*% X) %*% t(X) %*% mirna_counts_clr
-ratio_pool$theta_hat <- theta_hat[2,]
+#ratio_pool$theta_hat <- theta_hat[2,]
 ratio_pool_mirnas$theta_hat_clean <- theta_hat_cleandata[2,]
 log_rat_lin_mod_MSE = mean((theta_hat_cleandata[2,] - ratio_pool_mirnas$clr_ratio)^2)
 print(log_rat_lin_mod_MSE)
