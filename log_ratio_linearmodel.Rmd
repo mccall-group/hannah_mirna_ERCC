@@ -142,6 +142,8 @@ mirna_level_counts <- t(mirna_level_counts)
 
 ```{r}
 #clr transform the raw count data 
+#Y doesn't have any filtering for sequences that align to more than one mirna or mirnas whose canonical sequences exceed a certain length 
+#mirna_level_counts is filtered data 
 Y_clr = matrix(0, nrow = N, ncol = D)
 mirna_counts_clr = matrix(0, nrow = nrow(mirna_level_counts), ncol = ncol(mirna_level_counts))
 for(j in 1:N){
@@ -152,6 +154,9 @@ for(j in 1:N){
 ```
 
 ```{r}
+#calculate hat matrix as formula is given in Aitchison compositional data analysis book
+#Y_clr is raw data that has been CLR transformed 
+#mirna_counts_clr is filtered data 
 theta_hat = solve(t(X) %*% X) %*% t(X) %*% Y_clr
 theta_hat_cleandata = solve(t(X) %*% X) %*% t(X) %*% mirna_counts_clr
 ratio_pool$theta_hat <- theta_hat[2,]
