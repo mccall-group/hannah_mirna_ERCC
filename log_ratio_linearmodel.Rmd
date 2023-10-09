@@ -1,0 +1,324 @@
+---
+title: "Untitled"
+author: "Hannah Swan"
+date: "September 25, 2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(compositions)
+library(fido)
+library(mvtnorm)
+library(LaplacesDemon)
+library(tidyverse)
+```
+
+
+
+```{r}
+#trying to simulate a situation similar to what we have in ERCC data 
+#D = 334 (number of mirnas) N = 18 (number of samples) Q = 2 (number of covariates, intercept + 1 indicator variable for membership in pool B)
+D = 334 
+N = 18 
+Q = 2 
+X0 = rep(1, 18)
+set.seed(1989)
+X1 = rbinom(18, 1, 0.5)
+X = rbind(X0, X1)
+Sigma = LaplacesDemon::rinvwishart(D+10, diag(1, D))
+
+```
+
+
+```{r}
+ratio_pool = read.csv(file = "/scratch/mmccall2_lab/ERCC.Rds/FINAL_Ratiometric_SynthA_and_SynthB-1.csv", sep="\t")
+ratio_pool$A <- as.numeric(gsub("x","", ratio_pool$X.SAMPLE.A.))
+ratio_pool$B <- as.numeric(gsub("x","", ratio_pool$X.SAMPLE.B.))
+ratio_pool$ratio <- ratio_pool$B/ratio_pool$A
+ratio_pool$clr_ratio <- matrix(clr(ratio_pool$ratio), ncol=1)
+ratio_pool$alr_ratio <- matrix(c(alr(ratio_pool$ratio),1))
+ratio_pool$log_ratio <- log(ratio_pool$ratio)
+
+```
+
+```{r}
+new_idx = NULL
+for(i in 1:nrow(ratio_pool)+1){
+  new_idx = c(new_idx, which(ratio_pool$ratio.seqID == unique_mirnas[i]))
+}
+
+ratio_pool = ratio_pool[new_idx,]
+```
+
+```{r}
+ratio_pool_mirnas <- read.csv(file = '/scratch/mmccall2_lab/ERCC.Rds/FINAL_Ratiometric_SynthA_and_SynthB-1_fixlast3.csv', sep="\t")
+ERCC_exp = readRDS("/scratch/mmccall2_lab/ERCC_UMI/panel_B_SE.rds")
+ERCC_exp = collapseReplicates(ERCC_exp, groupby = colData(ERCC_exp)$Experiment)
+```
+
+##Filtering miRNAs that share any sequences:
+```{r}
+ratio_pool2 = ratio_pool_mirnas
+#sample case where we are just looking at first mirna: 
+for(i in 2:nrow(ratio_pool_mirnas)){
+  my_mirna = ratio_pool$ratio.seqID[1]
+  if(sum(ERCC_exp@elementMetadata$Template[ERCC_exp@elementMetadata$miRNA == my_mirna] %in% ERCC_exp@elementMetadata$Template[ERCC_exp@elementMetadata$miRNA == ratio_pool2$ratio.seqID[i]])){
+    print(i)
+    print(ERCC_exp@elementMetadata$Template[ERCC_exp@elementMetadata$miRNA == my_mirna && ERCC_exp@elementMetadata$Template[ERCC_exp@elementMetadata$miRNA == my_mirna] %in% ERCC_exp@elementMetadata$Template[ERCC_exp@elementMetadata$miRNA == ratio_pool2$ratio.seqID[i]]])
+  }
+}
+```
+
+```{r}
+mirna_sequences = list()
+for(i in 1:nrow(ratio_pool_mirnas)){
+  mirna_sequences[[i]] = ERCC_exp@elementMetadata$Template[ERCC_exp@elementMetadata$miRNA == ratio_pool_mirnas$ratio.seqID[i]]
+}
+
+```
+
+```{r}
+sequence_level_counts = ERCC_exp@assays@data$total_counts
+sequence_level_counts = data.frame(sequence_level_counts)
+sequence_level_counts <- cbind(sequence_level_counts, ERCC_exp@elementMetadata$miRNA)
+
+```
+
+
+```{r}
+obs_sequences = ERCC_exp@elementMetadata$Template
+obs_sequences = data.frame(obs_sequences)
+colnames(obs_sequences) = 'sequence'
+obs_sequences$miRNA = ERCC_exp@elementMetadata$miRNA
+obs_sequences = cbind(obs_sequences, ERCC_exp@assays@data$total_counts)
+obs_sequences = obs_sequences[!duplicated(obs_sequences$sequence),]
+
+
+```
+
+
+```{r}
+n_samples = dim(ERCC_exp@assays@data$total_counts)[2]
+n_mirnas = nrow(ratio_pool_mirnas)
+ratio_pool_mirnas <- ratio_pool_mirnas[ratio_pool_mirnas$Length < 45,] 
+ratio_pool_mirnas$A <- as.numeric(gsub("x","", ratio_pool_mirnas$X.SAMPLE.A.))
+ratio_pool_mirnas$B <- as.numeric(gsub("x","", ratio_pool_mirnas$X.SAMPLE.B.))
+ratio_pool_mirnas$ratio <- ratio_pool_mirnas$B/ratio_pool_mirnas$A
+ratio_pool_mirnas$clr_ratio <- matrix(clr(ratio_pool_mirnas$ratio), ncol=1)
+ratio_pool_mirnas$alr_ratio <- matrix(c(alr(ratio_pool_mirnas$ratio),1))
+ratio_pool_mirnas$log_ratio <- log(ratio_pool_mirnas$ratio)
+#mirna-level counts: 
+mirna_level_counts = matrix(0, nrow = n_mirnas, ncol = n_samples)
+for(i in 1:n_mirnas){
+  my_df = obs_sequences %>% filter(miRNA == ratio_pool_mirnas$ratio.seqID[i])
+  my_counts = my_df %>% select(!c(sequence, miRNA))
+  mirna_level_counts[i,] = colSums(my_counts)
+}
+```
+
+```{r}
+lambda0 = log(1)
+lambda1 <- ratio_pool$log_ratio
+Lambda = cbind(lambda0, lambda1)
+
+```
+
+```{r}
+eta = matrix(0, D, N)
+for(j in 1:N){
+  eta[,j] = rmvnorm(1, Lambda %*% X[,j], Sigma)
+}
+
+```
+
+```{r}
+pi = matrix(0, D, N)
+for (j in 1:N){
+  pi[,j] = compositions::clrInv(eta[,j])
+}
+
+n_js = rpois(18, 50000)
+
+```
+
+```{r}
+Y = matrix(0, D, N)
+
+for (j in 1:N){
+  Y[,j] = stats::rmultinom(1, n_js[j], pi[,j])
+}
+
+```
+
+
+```{r}
+X1 <- rep(0, ncol(ERCC_exp))
+X1[ERCC_exp$Pool == "SynthB"] = 1
+X0 = rep(1, ncol(ERCC_exp))
+X <- rbind(X0, X1)
+ERCC_mirnaseq_counts = ERCC_exp@assays@data$total_counts 
+unique_mirnas = unique(ERCC_exp@elementMetadata$miRNA)
+ERCC_mirna_counts = matrix(0, nrow = ncol(ERCC_exp), ncol = length(unique_mirnas))
+for(i in 1:length(unique_mirnas)){
+  ERCC_mirna_counts[,i] =colSums(sequence_level_counts[ERCC_exp@elementMetadata$miRNA == unique_mirnas[i],])
+}
+Y <- t(ERCC_mirna_counts[,-1])
+
+```
+
+
+##Log ratio linear modeling of ERCC miRNA data 
+```{r}
+#first checking to make sure that the dimension of the covariate matrix is number of samples (N) by number of covariates (Q)
+dim(X)
+X <- t(X)
+dim(X)
+```
+
+```{r}
+#dimension of Y should be number of samples (N) by number of categories (D) a.k.a. number of miRNA
+dim(Y)
+Y <- t(Y)
+
+mirna_level_counts <- t(mirna_level_counts)
+```
+
+```{r}
+#clr transform the raw count data 
+Y_clr = matrix(0, nrow = N, ncol = D)
+mirna_counts_clr = matrix(0, nrow = nrow(mirna_level_counts), ncol = ncol(mirna_level_counts))
+for(j in 1:N){
+  Y_clr[j,] = compositions::clr(Y[j,])
+  mirna_counts_clr[j,] = compositions::clr(mirna_level_counts[j,])
+}
+
+```
+
+```{r}
+theta_hat = solve(t(X) %*% X) %*% t(X) %*% Y_clr
+theta_hat_cleandata = solve(t(X) %*% X) %*% t(X) %*% mirna_counts_clr
+ratio_pool$theta_hat <- theta_hat[2,]
+ratio_pool_mirnas$theta_hat_clean <- theta_hat_cleandata[2,]
+```
+
+
+```{r}
+ddsERCC_2 <- DESeqDataSetFromMatrix(t(mirna_level_counts), colData = colData(ERCC_exp), design = ~ Pool + Lab)
+ddsERCC_2 <- DESeq(ddsERCC_2)
+res <- results(ddsERCC_2, name = "Pool_SynthB_vs_SynthA")
+ERCC_DESEQ2_logfold = res$log2FoldChange
+ERCC_DESEQ2_MSE <- mean((res$log2FoldChange - log2(ratio_pool_mirnas$ratio))^2)
+print(ERCC_DESEQ2_MSE)
+```
+
+
+```{r}
+##calculating size factors to normalize the counts: 
+#1. Calculate geometric mean across samples for each gene, save it 
+
+gene_geom_mean = vector()
+for (i in 1:nrow(Y)){
+  gene_geom_mean[i] = exp(mean(log(Y[i,])))
+}
+
+#2. In each sample, divide the miRNA count by the geometric mean calculated for that mirna:
+count_by_gene_geom = matrix(0, nrow(Y), ncol(Y))
+for (j in 1:ncol(Y)){
+  count_by_gene_geom[,j] = Y[,j] / gene_geom_mean
+}
+
+size_factor = apply(count_by_gene_geom, 2, stats::median)
+
+
+Y[,1]*size_factor[1]
+```
+
+
+```{r}
+library(MicrobiomeStat)
+data(smokers)
+
+ind <- smokers$meta$AIRWAYSITE == 'Throat'
+otu.tab <- as.data.frame(smokers$otu[, ind])
+
+meta <- cbind.data.frame(Smoke = factor(smokers$meta$SMOKER[ind]),
+Sex = factor(smokers$meta$SEX[ind]),
+Site = factor(smokers$meta$SIDEOFBODY[ind]),
+SubjectID = factor(smokers$meta$HOST_SUBJECT_ID[ind]))
+```
+
+
+```{r}
+ERCC_linda = linda(Y, t(X), formula = '~X1', p.adj.method = 'BH')
+linda_diff_exp_mirna = unique_mirnas[ERCC_linda$output$x$padj < 0.05]
+true_pos = which(ratio_pool[ratio_pool$ratio.seqID %in% linda_diff_exp_mirna,'ratio'] != 1.0)
+false_pos = which(ratio_pool[ratio_pool$ratio.seqID %in% linda_diff_exp_mirna, 'ratio'] == 1.0)
+true_neg = which(ratio_pool[!(ratio_pool$ratio.seqID %in% linda_diff_exp_mirna), 'ratio'] == 1.0)
+false_neg = which(ratio_pool[!(ratio_pool$ratio.seqID %in% linda_diff_exp_mirna), 'ratio'] != 1.0)
+```
+
+### Simulate data from multinomial logistic normal model and then fit LinDA model to see how we do applying LinDA to data with this type of structure : 
+Simulating data according to appendix H in the Silverman et al. paper 
+```{r}
+library(LaplacesDemon)
+D = nrow(Y)
+N = ncol(Y)
+Q = nrow(X)
+
+##simulating data from multinomial logistic normal model in fido paper then fitting LinDA model to data to see how it performs 
+
+I_D = diag(rep(1,D))
+I_N = diag(rep(1,N))
+I_Q = diag(rep(1,Q))
+
+X = mvtnorm::rmvnorm(1, rep(0, Q*N), kronecker(I_Q, I_N))
+X <- matrix(X, nrow = 2, ncol = 18, byrow = TRUE)
+set.seed(1989)
+Sigma <- rinvwishart(D+10, diag(rep(1,D)))
+
+##set 20% of Lambda values to something non-zero, the rest are zero 
+signif_idx <- sample(1:D, 67)
+
+Lambda_signif <- rnorm(67, 0, 1)
+Lambda <- matrix(0, nrow = D, ncol = Q)
+Lambda[signif_idx, 2] = Lambda_signif
+Lambda[,1] = rnorm(D, 0, 1) 
+  
+
+eta_js = matrix(0, nrow = D, ncol = N)
+for(j in 1:N){
+  eta_js[,j] = mvtnorm::rmvnorm(1, Lambda%*%X[,j], Sigma)
+}
+
+pi_js = matrix(0, nrow = D, ncol = N)
+for(j in 1:N){
+  pi_js[,j] = compositions::clrInv(eta_js[,j])
+}
+
+Y_js = matrix(0, nrow = D, ncol = N)
+n_js = NULL
+for(j in 1:N){
+  n_js = c(n_js, rpois(1, 5000))
+  Y_js[,j] = stats::rmultinom(1, n_js[j], pi_js[,j])
+}
+
+```
+
+```{r}
+linda_obj = linda(Y_js, X, formula = '~ x1')
+print('Estimated signal')
+est_signif = unique_mirnas[linda_obj$output$x1$padj < 0.05]
+print('True signal')
+true_signif = unique_mirnas[Lambda[,2] != 0]
+```
+
+```{r}
+true_pos = est_signif %in% true_signif 
+false_neg = !(true_signif %in% est_signif)
+true_neg = unique_mirnas[linda_obj$output$x1$padj > 0.05 & Lambda[,2] == 0] 
+false_pos = unique_mirnas[linda_obj$output$x1$padj < 0.05 & Lambda[,2] == 0]
+```
