@@ -56,6 +56,8 @@ sequence_level_counts <- cbind(sequence_level_counts, ERCC_exp@elementMetadata$m
 ```{r}
 #pull out the observed sequences in the ERCC dataset from the SummarizedExperiment object 
 obs_sequences = ERCC_exp@elementMetadata$Template
+#making the duplicated_sequences2 object at this point to verify that this gets me the same sequences as using the duplicated function 
+duplicated_sequences2 = names(table(obs_sequences))[table(obs_sequences) > 1 ]
 #make it a dataframe
 obs_sequences = data.frame(obs_sequences)
 #rename the column we currently have 
@@ -101,6 +103,11 @@ X <- rbind(X0, X1)
 ERCC_mirnaseq_counts = ERCC_exp@assays@data$total_counts 
 unique_mirnas = unique(ERCC_exp@elementMetadata$miRNA)
 
+```
+
+```{r}
+x <- c(1,2,2,3,3,3,4,5,6,6)
+names(table())[table(x) == 1]
 ```
 
 
