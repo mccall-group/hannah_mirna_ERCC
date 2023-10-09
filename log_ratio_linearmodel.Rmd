@@ -53,15 +53,38 @@ sequence_level_counts <- cbind(sequence_level_counts, ERCC_exp@elementMetadata$m
 
 
 ```{r}
+#pull out the observed sequences in the ERCC dataset from the SummarizedExperiment object 
 obs_sequences = ERCC_exp@elementMetadata$Template
+#make it a dataframe
 obs_sequences = data.frame(obs_sequences)
+#rename the column we currently have 
 colnames(obs_sequences) = 'sequence'
+#add column for which miRNA each observation maps to. Note that there can be many different sequences that map to the same miRNA
 obs_sequences$miRNA = ERCC_exp@elementMetadata$miRNA
+#add on the sequence level countdata 
 obs_sequences = cbind(obs_sequences, ERCC_exp@assays@data$total_counts)
-obs_sequences = obs_sequences[!duplicated(obs_sequences$sequence),]
+duplicated_sequences = unique(obs_sequences$sequence[duplicated(obs_sequences$sequence)])
+```
 
+```{r}
+obs_sequences = obs_sequences[!(obs_sequences$sequence %in% duplicated_sequences), ] 
+```
+
+```{r}
+duplicated_sequences <- cbind(data.frame(ERCC_exp@elementMetadata$Template), data.frame(ERCC_exp@elementMetadata$miRNA), data.frame(ERCC_exp@assays@data$total_counts))
+```
+
+
+```{r}
+colnames(duplicated_sequences)[c(1,2)] = c('sequence', 'mirna')
 
 ```
+
+```{r}
+duplicated_sequences <- duplicated_sequences[duplicated(duplicated_sequences$sequence),]
+#duplicated_sequences = duplicated_sequences %>% group_by(sequence)
+```
+
 
 
 ```{r}
@@ -83,39 +106,6 @@ for(i in 1:n_mirnas){
 }
 ```
 
-```{r}
-lambda0 = log(1)
-lambda1 <- ratio_pool$log_ratio
-Lambda = cbind(lambda0, lambda1)
-
-```
-
-```{r}
-eta = matrix(0, D, N)
-for(j in 1:N){
-  eta[,j] = rmvnorm(1, Lambda %*% X[,j], Sigma)
-}
-
-```
-
-```{r}
-pi = matrix(0, D, N)
-for (j in 1:N){
-  pi[,j] = compositions::clrInv(eta[,j])
-}
-
-n_js = rpois(18, 50000)
-
-```
-
-```{r}
-Y = matrix(0, D, N)
-
-for (j in 1:N){
-  Y[,j] = stats::rmultinom(1, n_js[j], pi[,j])
-}
-
-```
 
 
 ```{r}
@@ -166,6 +156,8 @@ theta_hat = solve(t(X) %*% X) %*% t(X) %*% Y_clr
 theta_hat_cleandata = solve(t(X) %*% X) %*% t(X) %*% mirna_counts_clr
 ratio_pool$theta_hat <- theta_hat[2,]
 ratio_pool_mirnas$theta_hat_clean <- theta_hat_cleandata[2,]
+log_rat_lin_mod_MSE = mean((theta_hat_cleandata[2,] - ratio_pool_mirnas$clr_ratio)^2)
+print(log_rat_lin_mod_MSE)
 ```
 
 
