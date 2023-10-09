@@ -20,21 +20,6 @@ library(tidyverse)
 
 
 ```{r}
-#trying to simulate a situation similar to what we have in ERCC data 
-#D = 334 (number of mirnas) N = 18 (number of samples) Q = 2 (number of covariates, intercept + 1 indicator variable for membership in pool B)
-D = 334 
-N = 18 
-Q = 2 
-X0 = rep(1, 18)
-set.seed(1989)
-X1 = rbinom(18, 1, 0.5)
-X = rbind(X0, X1)
-Sigma = LaplacesDemon::rinvwishart(D+10, diag(1, D))
-
-```
-
-
-```{r}
 ratio_pool = read.csv(file = "/scratch/mmccall2_lab/ERCC.Rds/FINAL_Ratiometric_SynthA_and_SynthB-1.csv", sep="\t")
 ratio_pool$A <- as.numeric(gsub("x","", ratio_pool$X.SAMPLE.A.))
 ratio_pool$B <- as.numeric(gsub("x","", ratio_pool$X.SAMPLE.B.))
@@ -45,45 +30,23 @@ ratio_pool$log_ratio <- log(ratio_pool$ratio)
 
 ```
 
-```{r}
-new_idx = NULL
-for(i in 1:nrow(ratio_pool)+1){
-  new_idx = c(new_idx, which(ratio_pool$ratio.seqID == unique_mirnas[i]))
-}
-
-ratio_pool = ratio_pool[new_idx,]
-```
 
 ```{r}
+#read in table of mirnas that contains lengths of canonical sequences 
 ratio_pool_mirnas <- read.csv(file = '/scratch/mmccall2_lab/ERCC.Rds/FINAL_Ratiometric_SynthA_and_SynthB-1_fixlast3.csv', sep="\t")
+#read in SummarizedExperiment object 
 ERCC_exp = readRDS("/scratch/mmccall2_lab/ERCC_UMI/panel_B_SE.rds")
+#collapse replicates
 ERCC_exp = collapseReplicates(ERCC_exp, groupby = colData(ERCC_exp)$Experiment)
 ```
 
-##Filtering miRNAs that share any sequences:
-```{r}
-ratio_pool2 = ratio_pool_mirnas
-#sample case where we are just looking at first mirna: 
-for(i in 2:nrow(ratio_pool_mirnas)){
-  my_mirna = ratio_pool$ratio.seqID[1]
-  if(sum(ERCC_exp@elementMetadata$Template[ERCC_exp@elementMetadata$miRNA == my_mirna] %in% ERCC_exp@elementMetadata$Template[ERCC_exp@elementMetadata$miRNA == ratio_pool2$ratio.seqID[i]])){
-    print(i)
-    print(ERCC_exp@elementMetadata$Template[ERCC_exp@elementMetadata$miRNA == my_mirna && ERCC_exp@elementMetadata$Template[ERCC_exp@elementMetadata$miRNA == my_mirna] %in% ERCC_exp@elementMetadata$Template[ERCC_exp@elementMetadata$miRNA == ratio_pool2$ratio.seqID[i]]])
-  }
-}
-```
 
 ```{r}
-mirna_sequences = list()
-for(i in 1:nrow(ratio_pool_mirnas)){
-  mirna_sequences[[i]] = ERCC_exp@elementMetadata$Template[ERCC_exp@elementMetadata$miRNA == ratio_pool_mirnas$ratio.seqID[i]]
-}
-
-```
-
-```{r}
+#pull out table of count data from SummarizedExperiment object 
 sequence_level_counts = ERCC_exp@assays@data$total_counts
+#make it a dataframe for ease of use 
 sequence_level_counts = data.frame(sequence_level_counts)
+#add in a column to this dataframe that has the name of the mirna for each observation 
 sequence_level_counts <- cbind(sequence_level_counts, ERCC_exp@elementMetadata$miRNA)
 
 ```
