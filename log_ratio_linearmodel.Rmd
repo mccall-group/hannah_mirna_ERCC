@@ -48,14 +48,14 @@ sequence_level_counts = ERCC_exp@assays@data$total_counts
 #make it a dataframe for ease of use 
 sequence_level_counts = data.frame(sequence_level_counts)
 #add in a column to this dataframe that has the name of the mirna for each observation 
-sequence_level_counts <- cbind(sequence_level_counts, ERCC_exp@elementMetadata$miRNA)
-
+sequence_level_counts <- cbind(sequence_level_counts, ERCC_exp@elementMetadata$miRNA, ERCC_exp@elementMetadata$Template)
+sequence_level_counts <- sequence_level_counts[sequence_level_counts[,19]  != '-',]
 ```
 
 
 ```{r}
 #pull out the observed sequences in the ERCC dataset from the SummarizedExperiment object 
-obs_sequences = ERCC_exp@elementMetadata$Template
+obs_sequences = sequence_level_counts[,20]
 #making the duplicated_sequences2 object at this point to verify that this gets me the same sequences as using the duplicated function 
 duplicated_sequences2 = names(table(obs_sequences))[table(obs_sequences) > 1 ]
 #make it a dataframe
@@ -63,9 +63,9 @@ obs_sequences = data.frame(obs_sequences)
 #rename the column we currently have 
 colnames(obs_sequences) = 'sequence'
 #add column for which miRNA each observation maps to. Note that there can be many different sequences that map to the same miRNA
-obs_sequences$miRNA = ERCC_exp@elementMetadata$miRNA
+obs_sequences$miRNA = sequence_level_counts[,19]
 #add on the sequence level countdata 
-obs_sequences = cbind(obs_sequences, ERCC_exp@assays@data$total_counts)
+obs_sequences = cbind(obs_sequences, sequence_level_counts)
 duplicated_sequences = unique(obs_sequences$sequence[duplicated(obs_sequences$sequence)])
 ```
 
@@ -85,10 +85,11 @@ ratio_pool_mirnas$clr_ratio <- matrix(clr(ratio_pool_mirnas$ratio), ncol=1)
 ratio_pool_mirnas$alr_ratio <- matrix(c(alr(ratio_pool_mirnas$ratio),1))
 ratio_pool_mirnas$log_ratio <- log(ratio_pool_mirnas$ratio)
 #mirna-level counts: 
+#sequence_counts = obs_sequences %>% select(!c(sequence, miRNA, ERCC_exp@elementMetadata$Template, ERCC_exp@elelementMetadata$miRNA))
 mirna_level_counts = matrix(0, nrow = n_mirnas, ncol = n_samples)
 for(i in 1:n_mirnas){
   my_df = obs_sequences %>% filter(miRNA == ratio_pool_mirnas$ratio.seqID[i])
-  my_counts = my_df %>% select(!c(sequence, miRNA))
+  my_counts = my_df[,3:20]
   mirna_level_counts[i,] = colSums(my_counts)
 }
 ```
@@ -103,11 +104,6 @@ X <- rbind(X0, X1)
 ERCC_mirnaseq_counts = ERCC_exp@assays@data$total_counts 
 unique_mirnas = unique(ERCC_exp@elementMetadata$miRNA)
 
-```
-
-```{r}
-x <- c(1,2,2,3,3,3,4,5,6,6)
-names(table())[table(x) == 1]
 ```
 
 
@@ -149,123 +145,51 @@ theta_hat_cleandata = solve(t(X) %*% X) %*% t(X) %*% mirna_counts_clr
 #ratio_pool$theta_hat <- theta_hat[2,]
 ratio_pool_mirnas$theta_hat_clean <- theta_hat_cleandata[2,]
 log_rat_lin_mod_MSE = mean((theta_hat_cleandata[2,] - ratio_pool_mirnas$clr_ratio)^2)
-print(log_rat_lin_mod_MSE)
+print(paste0('The MSE for estimating the log fold change using a log ratio linear model is: ', as.character(log_rat_lin_mod_MSE), sep=''))
 ```
 
 
 ```{r}
-ddsERCC_2 <- DESeqDataSetFromMatrix(t(mirna_level_counts), colData = colData(ERCC_exp), design = ~ Pool + Lab)
+ddsERCC_2 <- DESeqDataSetFromMatrix(t(mirna_level_counts), colData = colData(ERCC_exp), design = ~ lab+Pool)
 ddsERCC_2 <- DESeq(ddsERCC_2)
 res <- results(ddsERCC_2, name = "Pool_SynthB_vs_SynthA")
-ERCC_DESEQ2_logfold = res$log2FoldChange
-ERCC_DESEQ2_MSE <- mean((res$log2FoldChange - log2(ratio_pool_mirnas$ratio))^2)
-print(ERCC_DESEQ2_MSE)
+ERCC_DESEQ2_logfold = log(2^res$log2FoldChange)
+ERCC_DESEQ2_MSE <- mean((ERCC_DESEQ2_logfold - log(ratio_pool_mirnas$ratio))^2)
+print(paste0('The MSE for estimating the log fold change using the DESeq2 model is: ', as.character(ERCC_DESEQ2_MSE), sep=''))
+#plot(res$log2FoldChange, log(ratio_pool_mirnas$))
 ```
 
 
-```{r}
-##calculating size factors to normalize the counts: 
-#1. Calculate geometric mean across samples for each gene, save it 
-
-gene_geom_mean = vector()
-for (i in 1:nrow(Y)){
-  gene_geom_mean[i] = exp(mean(log(Y[i,])))
-}
-
-#2. In each sample, divide the miRNA count by the geometric mean calculated for that mirna:
-count_by_gene_geom = matrix(0, nrow(Y), ncol(Y))
-for (j in 1:ncol(Y)){
-  count_by_gene_geom[,j] = Y[,j] / gene_geom_mean
-}
-
-size_factor = apply(count_by_gene_geom, 2, stats::median)
-
-
-Y[,1]*size_factor[1]
-```
-
 
 ```{r}
+#load package that has linda function:
 library(MicrobiomeStat)
-data(smokers)
 
-ind <- smokers$meta$AIRWAYSITE == 'Throat'
-otu.tab <- as.data.frame(smokers$otu[, ind])
-
-meta <- cbind.data.frame(Smoke = factor(smokers$meta$SMOKER[ind]),
-Sex = factor(smokers$meta$SEX[ind]),
-Site = factor(smokers$meta$SIDEOFBODY[ind]),
-SubjectID = factor(smokers$meta$HOST_SUBJECT_ID[ind]))
 ```
 
 
 ```{r}
-ERCC_linda = linda(Y, t(X), formula = '~X1', p.adj.method = 'BH')
-linda_diff_exp_mirna = unique_mirnas[ERCC_linda$output$x$padj < 0.05]
-true_pos = which(ratio_pool[ratio_pool$ratio.seqID %in% linda_diff_exp_mirna,'ratio'] != 1.0)
-false_pos = which(ratio_pool[ratio_pool$ratio.seqID %in% linda_diff_exp_mirna, 'ratio'] == 1.0)
-true_neg = which(ratio_pool[!(ratio_pool$ratio.seqID %in% linda_diff_exp_mirna), 'ratio'] == 1.0)
-false_neg = which(ratio_pool[!(ratio_pool$ratio.seqID %in% linda_diff_exp_mirna), 'ratio'] != 1.0)
-```
-
-### Simulate data from multinomial logistic normal model and then fit LinDA model to see how we do applying LinDA to data with this type of structure : 
-Simulating data according to appendix H in the Silverman et al. paper 
-```{r}
-library(LaplacesDemon)
-D = nrow(Y)
-N = ncol(Y)
-Q = nrow(X)
-
-##simulating data from multinomial logistic normal model in fido paper then fitting LinDA model to data to see how it performs 
-
-I_D = diag(rep(1,D))
-I_N = diag(rep(1,N))
-I_Q = diag(rep(1,Q))
-
-X = mvtnorm::rmvnorm(1, rep(0, Q*N), kronecker(I_Q, I_N))
-X <- matrix(X, nrow = 2, ncol = 18, byrow = TRUE)
-set.seed(1989)
-Sigma <- rinvwishart(D+10, diag(rep(1,D)))
-
-##set 20% of Lambda values to something non-zero, the rest are zero 
-signif_idx <- sample(1:D, 67)
-
-Lambda_signif <- rnorm(67, 0, 1)
-Lambda <- matrix(0, nrow = D, ncol = Q)
-Lambda[signif_idx, 2] = Lambda_signif
-Lambda[,1] = rnorm(D, 0, 1) 
-  
-
-eta_js = matrix(0, nrow = D, ncol = N)
-for(j in 1:N){
-  eta_js[,j] = mvtnorm::rmvnorm(1, Lambda%*%X[,j], Sigma)
-}
-
-pi_js = matrix(0, nrow = D, ncol = N)
-for(j in 1:N){
-  pi_js[,j] = compositions::clrInv(eta_js[,j])
-}
-
-Y_js = matrix(0, nrow = D, ncol = N)
-n_js = NULL
-for(j in 1:N){
-  n_js = c(n_js, rpois(1, 5000))
-  Y_js[,j] = stats::rmultinom(1, n_js[j], pi_js[,j])
-}
+#X_linda <- t(X)
+#fit linda - linear model for differential abundance analysis of microbiome data to mirna level sequence data 
+ERCC_linda = linda(t(mirna_level_counts), X_linda, formula = '~X1', p.adj.method = 'BH')
+#get estimate of log fold change from pool a to pool b: 
+linda_log_foldchange_est <- log(2^ERCC_linda$output$X1$log2FoldChange)
+#calculate MSE: 
+linda_MSE <- mean((linda_log_foldchange_est-ratio_pool_mirnas$log_ratio)^2)
+print(paste0('The MSE for estimating the log fold change using the linda model is: ', as.character(linda_MSE), sep = ''))
+#pull out mirnas id'd by linda to be differentially abundant (i.e. expressed)
+linda_diff_exp_mirna = ratio_pool_mirnas$ratio.seqID[ERCC_linda$output$X1$padj < 0.05]
+linda_not_diff_exp_mirna = ratio_pool_mirnas$ratio.seqID[ERCC_linda$output$X1$padj >= 0.05]
+diff_exp_mirna = ratio_pool_mirnas$ratio.seqID[ratio_pool_mirnas$ratio != 1]
+not_diff_exp_mirna = ratio_pool_mirnas$ratio.seqID[ratio_pool_mirnas$ratio == 1]
+#true positive rate = sensitivity 
+true_pos_rate = length(diff_exp_mirna[diff_exp_mirna %in% linda_diff_exp_mirna])/length(diff_exp_mirna)
+#false positive rate 
+false_pos_rate = sum(linda_diff_exp_mirna %in% not_diff_exp_mirna) / length(not_diff_exp_mirna)
+#false negative rate 
+false_neg_rate = sum(linda_not_diff_exp_mirna %in% diff_exp_mirna) / length(diff_exp_mirna)
+#true negative rate = specificity 
+true_neg_rate = sum(linda_not_diff_exp_mirna %in% not_diff_exp_mirna) / length(not_diff_exp_mirna)
 
 ```
 
-```{r}
-linda_obj = linda(Y_js, X, formula = '~ x1')
-print('Estimated signal')
-est_signif = unique_mirnas[linda_obj$output$x1$padj < 0.05]
-print('True signal')
-true_signif = unique_mirnas[Lambda[,2] != 0]
-```
-
-```{r}
-true_pos = est_signif %in% true_signif 
-false_neg = !(true_signif %in% est_signif)
-true_neg = unique_mirnas[linda_obj$output$x1$padj > 0.05 & Lambda[,2] == 0] 
-false_pos = unique_mirnas[linda_obj$output$x1$padj < 0.05 & Lambda[,2] == 0]
-```
