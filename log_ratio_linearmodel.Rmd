@@ -12,11 +12,11 @@ knitr::opts_chunk$set(echo = TRUE)
 ##Loading necessary packages 
 ```{r, message = FALSE, cache=TRUE}
 library(compositions)
-library(fido)
 library(mvtnorm)
 library(LaplacesDemon)
 library(tidyverse)
 library(DESeq2)
+library(tidyverse)
 ```
 
 
@@ -208,7 +208,7 @@ true_neg_rate = sum(linda_not_diff_exp_mirna %in% not_diff_exp_mirna) / length(n
 
 ```
 
-```{r}
+```{r, cache = TRUE}
 #Load fido package to fit a Bayesian hierarchical multinomial logistic normal model to the miRNA-level data 
 #fitting model using default priors suggested in the fido vignette - investigating how prior specification affects model performance might be useful 
 library(fido)
@@ -228,17 +228,17 @@ Theta <- matrix(0, nmirna-1, nrow(X))
 Gamma <- diag(nrow(X))
 ```
 
-```{r}
+```{r, cache = TRUE}
 priors <- pibble(NULL, X, upsilon, Theta, Gamma, Xi)
 
 ```
 
-```{r}
+```{r, cache = TRUE}
 priors <- to_clr(priors)
 
 ```
 
-```{r}
+```{r, cache = TRUE}
 priors$Y <- Y
 ERCC_posterior <- refit(priors, optim_method = 'adam')
 ```
@@ -247,15 +247,24 @@ ERCC_posterior <- refit(priors, optim_method = 'adam')
 #calculate MAP estimate of Lambda as a point estimate for the log fold change from Pool B to Pool A 
 #draws are stored in a 3-dimensional matrix that is nmirnas x n samples x niterations in the MCMC algorithm so we have to use a for loop to calculate this ourselves 
 Lambda_sum = matrix(0, nrow = nrow(ERCC_posterior$Lambda[,,1]), ncol = ncol(ERCC_posterior$Lambda[,,1]))
-for(i in 1:niter(ERCC_posterior)){
+for(i in 1:fido::niter(ERCC_posterior)){
   Lambda_sum = Lambda_sum + ERCC_posterior$Lambda[,,i]
 }
 
-Lambda_postmean <- (1/niter(ERCC_posterior))*Lambda_sum
+Lambda_postmean <- (1/fido::niter(ERCC_posterior))*Lambda_sum
 ```
 
 ```{r}
 #calculate the MSE of the log fold change using the pibble model to estimate : 
 pibble_MSE <- mean((Lambda_postmean[,2]-ratio_pool_mirnas$clr_ratio)^2)
 print(paste0('The MSE for estimating the log fold change using the pibble model is: ', as.character(pibble_MSE), sep = ''))
+```
+
+```{r}
+#make a nice table displaying the MSE of all the different methods together: 
+col1 <- c('Log ratio linear model', 'DESeq2', 'LinDA', 'Pibble')
+col2 <- c(log_rat_lin_mod_MSE, ERCC_DESEQ2_MSE, linda_MSE, pibble_MSE) %>% round(., 6)
+results<- data.frame(col1, col2)
+colnames(results) <- c('Model', 'MSE')
+knitr::kable(results)
 ```
