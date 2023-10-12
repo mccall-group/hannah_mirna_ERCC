@@ -1,5 +1,5 @@
 ---
-title: "Untitled"
+title: "ERCC Log Ratio Linear Models"
 author: "Hannah Swan"
 date: "September 25, 2023"
 output: html_document
@@ -9,7 +9,8 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-```{r}
+##Loading necessary packages 
+```{r, message = FALSE, cache=TRUE}
 library(compositions)
 library(fido)
 library(mvtnorm)
@@ -20,7 +21,7 @@ library(DESeq2)
 
 
 
-```{r}
+```{r, cache = TRUE}
 ratio_pool = read.csv(file = "/scratch/mmccall2_lab/ERCC.Rds/FINAL_Ratiometric_SynthA_and_SynthB-1.csv", sep="\t")
 ratio_pool$A <- as.numeric(gsub("x","", ratio_pool$X.SAMPLE.A.))
 ratio_pool$B <- as.numeric(gsub("x","", ratio_pool$X.SAMPLE.B.))
@@ -32,7 +33,7 @@ ratio_pool$log_ratio <- log(ratio_pool$ratio)
 ```
 
 
-```{r}
+```{r, cache = TRUE}
 #read in table of mirnas that contains lengths of canonical sequences 
 ratio_pool_mirnas <- read.csv(file = '/scratch/mmccall2_lab/ERCC.Rds/FINAL_Ratiometric_SynthA_and_SynthB-1_fixlast3.csv', sep="\t")
 #read in SummarizedExperiment object 
@@ -42,18 +43,19 @@ ERCC_exp = collapseReplicates(ERCC_exp, groupby = colData(ERCC_exp)$Experiment)
 ```
 
 
-```{r}
+```{r, cache = TRUE}
 #pull out table of count data from SummarizedExperiment object 
 sequence_level_counts = ERCC_exp@assays@data$total_counts
 #make it a dataframe for ease of use 
 sequence_level_counts = data.frame(sequence_level_counts)
 #add in a column to this dataframe that has the name of the mirna for each observation 
 sequence_level_counts <- cbind(sequence_level_counts, ERCC_exp@elementMetadata$miRNA, ERCC_exp@elementMetadata$Template)
+#getting rid of sequences that didn't align to any mirna 
 sequence_level_counts <- sequence_level_counts[sequence_level_counts[,19]  != '-',]
 ```
 
 
-```{r}
+```{r, cache=TRUE}
 #pull out the observed sequences in the ERCC dataset from the SummarizedExperiment object 
 obs_sequences = sequence_level_counts[,20]
 #making the duplicated_sequences2 object at this point to verify that this gets me the same sequences as using the duplicated function 
@@ -69,15 +71,18 @@ obs_sequences = cbind(obs_sequences, sequence_level_counts)
 duplicated_sequences = unique(obs_sequences$sequence[duplicated(obs_sequences$sequence)])
 ```
 
-```{r}
+
+##Keeping only sequences that appear once 
+```{r, cache = TRUE}
 obs_sequences = obs_sequences[!(obs_sequences$sequence %in% duplicated_sequences), ] 
 ```
 
 
-```{r}
+##Aggregate data on miRNA level so we can fit multiple models to miRNA level data rather than sequence level data
+```{r, cache=TRUE}
 n_samples = dim(ERCC_exp@assays@data$total_counts)[2]
-n_mirnas = nrow(ratio_pool_mirnas)
 ratio_pool_mirnas <- ratio_pool_mirnas[ratio_pool_mirnas$Length < 45,] 
+n_mirnas = nrow(ratio_pool_mirnas)
 ratio_pool_mirnas$A <- as.numeric(gsub("x","", ratio_pool_mirnas$X.SAMPLE.A.))
 ratio_pool_mirnas$B <- as.numeric(gsub("x","", ratio_pool_mirnas$X.SAMPLE.B.))
 ratio_pool_mirnas$ratio <- ratio_pool_mirnas$B/ratio_pool_mirnas$A
@@ -96,7 +101,8 @@ for(i in 1:n_mirnas){
 
 
 
-```{r}
+```{r, cache=TRUE}
+#define design matrix for log ratio linear model 
 X1 <- rep(0, ncol(ERCC_exp))
 X1[ERCC_exp$Pool == "SynthB"] = 1
 X0 = rep(1, ncol(ERCC_exp))
@@ -108,22 +114,26 @@ unique_mirnas = unique(ERCC_exp@elementMetadata$miRNA)
 
 
 ##Log ratio linear modeling of ERCC miRNA data 
-```{r}
+```{r, cache=TRUE}
 #first checking to make sure that the dimension of the covariate matrix is number of samples (N) by number of covariates (Q)
+#have to take the transpose of X as it's defined above 
 dim(X)
 X <- t(X)
 dim(X)
 ```
 
-```{r}
+```{r, cache=TRUE}
 #dimension of Y should be number of samples (N) by number of categories (D) a.k.a. number of miRNA
+#this isn't how our data is structured so we have to take the transpose
 dim(Y)
 Y <- t(Y)
 
 mirna_level_counts <- t(mirna_level_counts)
 ```
 
-```{r}
+
+##Apply the centered log ratio transformation to the pre-filtered count data:
+```{r, cache=TRUE}
 #clr transform the raw count data 
 #Y doesn't have any filtering for sequences that align to more than one mirna or mirnas whose canonical sequences exceed a certain length 
 #mirna_level_counts is filtered data 
@@ -136,7 +146,9 @@ for(j in 1:nrow(mirna_level_counts)){
 
 ```
 
-```{r}
+
+##Log ratio linear model on pre-filtered ERCC miRNA data:
+```{r, cache=TRUE}
 #calculate hat matrix as formula is given in Aitchison compositional data analysis book
 #Y_clr is raw data that has been CLR transformed 
 #mirna_counts_clr is filtered data 
@@ -149,7 +161,8 @@ print(paste0('The MSE for estimating the log fold change using a log ratio linea
 ```
 
 
-```{r}
+##DESeq2 model on pre-filtered ERCC miRNA data:
+```{r, cache=TRUE}
 ddsERCC_2 <- DESeqDataSetFromMatrix(t(mirna_level_counts), colData = colData(ERCC_exp), design = ~ lab+Pool)
 ddsERCC_2 <- DESeq(ddsERCC_2)
 res <- results(ddsERCC_2, name = "Pool_SynthB_vs_SynthA")
@@ -161,15 +174,17 @@ print(paste0('The MSE for estimating the log fold change using the DESeq2 model 
 
 
 
-```{r}
+```{r, cache=TRUE}
 #load package that has linda function:
 library(MicrobiomeStat)
 
 ```
 
 
-```{r}
-#X_linda <- t(X)
+##LinDA model on pre-filtered ERCC miRNA data:
+```{r, cache=TRUE}
+X_linda <- t(X)
+X_linda <- t(X_linda)
 #fit linda - linear model for differential abundance analysis of microbiome data to mirna level sequence data 
 ERCC_linda = linda(t(mirna_level_counts), X_linda, formula = '~X1', p.adj.method = 'BH')
 #get estimate of log fold change from pool a to pool b: 
@@ -193,3 +208,54 @@ true_neg_rate = sum(linda_not_diff_exp_mirna %in% not_diff_exp_mirna) / length(n
 
 ```
 
+```{r}
+#Load fido package to fit a Bayesian hierarchical multinomial logistic normal model to the miRNA-level data 
+#fitting model using default priors suggested in the fido vignette - investigating how prior specification affects model performance might be useful 
+library(fido)
+
+X <- t(X)
+Y <- t(mirna_level_counts)
+
+
+nmirna <- nrow(Y)
+upsilon <- nmirna + 3 
+Omega <- diag(nmirna)
+G <- cbind((diag(nmirna-1)), -1)
+Xi <- (upsilon - nmirna)*G%*%Omega%*%t(G)
+
+
+Theta <- matrix(0, nmirna-1, nrow(X))
+Gamma <- diag(nrow(X))
+```
+
+```{r}
+priors <- pibble(NULL, X, upsilon, Theta, Gamma, Xi)
+
+```
+
+```{r}
+priors <- to_clr(priors)
+
+```
+
+```{r}
+priors$Y <- Y
+ERCC_posterior <- refit(priors, optim_method = 'adam')
+```
+
+```{r}
+#calculate MAP estimate of Lambda as a point estimate for the log fold change from Pool B to Pool A 
+#draws are stored in a 3-dimensional matrix that is nmirnas x n samples x niterations in the MCMC algorithm so we have to use a for loop to calculate this ourselves 
+Lambda_sum = matrix(0, nrow = nrow(ERCC_posterior$Lambda[,,1]), ncol = ncol(ERCC_posterior$Lambda[,,1]))
+for(i in 1:niter(ERCC_posterior)){
+  Lambda_sum = Lambda_sum + ERCC_posterior$Lambda[,,i]
+}
+
+Lambda_postmean <- (1/niter(ERCC_posterior))*Lambda_sum
+```
+
+```{r}
+#calculate the MSE of the log fold change using the pibble model to estimate : 
+pibble_MSE <- mean((Lambda_postmean[,2]-ratio_pool_mirnas$clr_ratio)^2)
+print(paste0('The MSE for estimating the log fold change using the pibble model is: ', as.character(pibble_MSE), sep = ''))
+```
